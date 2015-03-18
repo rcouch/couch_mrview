@@ -30,7 +30,8 @@
               timeout_acc=0,
               notifier,
               stream,
-              refresh}).
+              refresh,
+              tref=nil}).
 
 -type changes_stream() :: true | false | once.
 -type changes_options() :: [{stream, changes_stream()} |
@@ -88,23 +89,53 @@ handle_changes(DbName, DDocId, View, Fun, Acc, Options) ->
         maybe_release_indexer(Refresh, DbName, DDocId)
     end.
 
-start_loop(#vst{dbname=DbName, ddoc=DDocId}=State, Options) ->
+start_loop(#vst{dbname=DbName, ddoc=DDocId}=State0, Options) ->
     {UserTimeout, Timeout, Heartbeat} = changes_timeout(Options),
     process_flag(trap_exit, true),
     Notifier = index_update_notifier(DbName, DDocId),
+
+    State1 = State0#vst{notifier=Notifier,
+                        user_timeout=UserTimeout,
+                        timeout=Timeout,
+                        heartbeat=Heartbeat},
+
+    State2 = case Heartbeat of
+                false -> State1;
+                _ ->
+                    {ok, TRef} = timer:send_interval(Heartbeat, heartbeat),
+                    State1#vst{tref=TRef}
+            end,
+
+
     try
-        loop(State#vst{notifier=Notifier,
-                       user_timeout=UserTimeout,
-                       timeout=Timeout,
-                       heartbeat=Heartbeat})
+        loop(State2)
     after
-        couch_index_event:stop(Notifier)
+        stop_loop(State2)
     end.
+
+stop_loop(#vst{notifier=Notifier, tref=TRef}) ->
+    couch_index_event:stop(Notifier),
+    case TRef of
+        nil ->
+            ok;
+        _ ->
+            timer:cancel(TRef),
+            ok
+    end.
+
 
 loop(#vst{notifier=Pid, since=Since, callback=Callback,
           acc=Acc, timeout=Timeout, heartbeat=Heartbeat,
           stream=Stream}=State) ->
+
     receive
+        heartbeat ->
+            case Callback(heartbeat, Acc) of
+                {ok, Acc2} ->
+                    loop(State#vst{acc=Acc2, timeout_acc=0});
+                {stop, Acc2} ->
+                    Callback(stop, {Since, Acc2})
+            end;
         index_update ->
             case view_changes_since(State) of
                 {ok, State2} when Stream =:= true ->
@@ -155,14 +186,13 @@ changes_timeout(Options) ->
             UserHeartbeat = proplists:get_value(heartbeat, Options),
             {Timeout, Heartbeat} = case UserHeartbeat of
                                        H when is_integer(H) ->
-                                           T1 = erlang:min(H, T),
+                                           T1 = erlang:max(H, T),
                                            {T1, H};
                                        true ->
-                                           T1 = erlang:min(DefaultTimeout,
-                                                           UserTimeout),
-                                           {T1, T1};
+                                           T1 = erlang:min(DefaultTimeout, T),
+                                           {T, T1};
                                        _ ->
-                                           {UserTimeout, false}
+                                           {T, false}
                                    end,
             {T, Timeout, Heartbeat}
     end.
