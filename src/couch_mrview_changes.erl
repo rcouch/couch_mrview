@@ -66,68 +66,75 @@ handle_changes(DbName, DDocId, View, Fun, Acc, Options) ->
                   queries=Queries,
                   since=Since,
                   callback=Fun,
-                  acc=Acc},
+                  acc=Acc,
+                  refresh=Refresh},
 
-    maybe_acquire_indexer(Refresh, DbName, DDocId),
-    try
-        case view_changes_since(State0) of
-            {ok, #vst{since=LastSeq, acc=Acc2}=State} ->
-                case Stream of
-                    true ->
-                        start_loop(State#vst{stream=true}, Options);
-                    once when LastSeq =:= Since ->
-                        start_loop(State#vst{stream=once}, Options);
-                    _ ->
-                        Fun(stop, {LastSeq, Acc2})
-                end;
-            {stop, #vst{since=LastSeq, acc=Acc2}} ->
-                Fun(stop, {LastSeq, Acc2});
-            Error ->
-                Error
-        end
-    after
-        maybe_release_indexer(Refresh, DbName, DDocId)
+    case view_changes_since(State0) of
+        {ok, #vst{since=LastSeq, acc=Acc2}=State} ->
+            case Stream of
+                true ->
+                    changes_loop(State#vst{stream=true}, Options);
+                once when LastSeq =:= Since ->
+                    changes_loop(State#vst{stream=once}, Options);
+                _ ->
+                    Fun(stop, {LastSeq, Acc2})
+            end;
+        {stop, #vst{since=LastSeq, acc=Acc2}} ->
+            Fun(stop, {LastSeq, Acc2});
+        Error ->
+            Error
     end.
 
-start_loop(#vst{dbname=DbName, ddoc=DDocId}=State0, Options) ->
+changes_loop(#vst{dbname=DbName, ddoc=DDocId, refresh=Refresh}=State0, Options) ->
     {UserTimeout, Timeout, Heartbeat} = changes_timeout(Options),
+
     process_flag(trap_exit, true),
     Notifier = index_update_notifier(DbName, DDocId),
 
-    State1 = State0#vst{notifier=Notifier,
+    State = State0#vst{notifier=Notifier,
                         user_timeout=UserTimeout,
                         timeout=Timeout,
                         heartbeat=Heartbeat},
 
-    State2 = case Heartbeat of
-                false -> State1;
+    %% maybe trigger the heartbear
+    TRef = case Heartbeat of
+                false -> nil;
                 _ ->
-                    {ok, TRef} = timer:send_interval(Heartbeat, heartbeat),
-                    State1#vst{tref=TRef}
-            end,
+                    {ok, TRef1} = timer:send_interval(Heartbeat, heartbeat),
+                    TRef1
+           end,
 
-
+    %% lock the indexer
+    maybe_acquire_indexer(Refresh, DbName, DDocId),
     try
-        loop(State2)
+        loop(State#vst{tref=TRef})
     after
-        stop_loop(State2)
+        terminate_loop(State#vst{tref=TRef})
     end.
 
-stop_loop(#vst{notifier=Notifier, tref=TRef}) ->
+
+terminate_loop(State) ->
+    #vst{dbname=DbName,
+         ddoc=DDocId,
+         notifier=Notifier,
+         tref=TRef,
+         refresh=Refresh} = State,
+
+    maybe_release_indexer(Refresh, DbName, DDocId),
+
     couch_index_event:stop(Notifier),
     case TRef of
         nil ->
             ok;
         _ ->
-            timer:cancel(TRef),
-            ok
-    end.
+            timer:cancel(TRef)
+    end,
+    ok.
 
 
 loop(#vst{notifier=Pid, since=Since, callback=Callback,
           acc=Acc, timeout=Timeout, heartbeat=Heartbeat,
           stream=Stream}=State) ->
-
     receive
         heartbeat ->
             case Callback(heartbeat, Acc) of
@@ -137,6 +144,8 @@ loop(#vst{notifier=Pid, since=Since, callback=Callback,
                     Callback(stop, {Since, Acc2})
             end;
         index_update ->
+            collect_updates(),
+
             case view_changes_since(State) of
                 {ok, State2} when Stream =:= true ->
                     loop(State2);
@@ -156,7 +165,7 @@ loop(#vst{notifier=Pid, since=Since, callback=Callback,
             loop(State#vst{notifier=Notifier});
         Message ->
             couch_log:info("got unexpected message ~p~n", [Message]),
-            loop(State)
+            exit(normal)
     after Timeout ->
               if
                   Heartbeat /= false ->
@@ -180,21 +189,20 @@ changes_timeout(Options) ->
                       Timeout1 -> Timeout1
                   end,
 
+
     case UserTimeout of
         infinity -> {infinity, infinity, false};
-        T ->
+        Timeout ->
             UserHeartbeat = proplists:get_value(heartbeat, Options),
-            {Timeout, Heartbeat} = case UserHeartbeat of
-                                       H when is_integer(H) ->
-                                           T1 = erlang:max(H, T),
-                                           {T1, H};
-                                       true ->
-                                           T1 = erlang:min(DefaultTimeout, T),
-                                           {T, T1};
-                                       _ ->
-                                           {T, false}
-                                   end,
-            {T, Timeout, Heartbeat}
+            Heartbeat= case UserHeartbeat of
+                           H when is_integer(H) ->
+                               H;
+                           true ->
+                               DefaultTimeout;
+                           _ ->
+                               false
+                       end,
+            {Timeout, Timeout, Heartbeat}
     end.
 
 view_changes_since(#vst{dbname=DbName, ddoc=DDocId, view=View,
@@ -225,6 +233,9 @@ view_changes_since(#vst{dbname=DbName, ddoc=DDocId, view=View,
     end,
 
     case Res of
+        {ok, {Go, _, Since}} ->
+            timer:sleep(100),
+            {Go, State};
         {ok, {Go, UserAcc2, Since2}}->
             {Go, State#vst{since=Since2, acc=UserAcc2}};
         Error ->
@@ -245,6 +256,19 @@ multi_view_changes([Options | Rest], {DbName, DDocId, View, Wrapper, Since}=Args
             Error
     end.
 
+
+collect_updates() ->
+    receive
+        index_update ->
+            collect_updates();
+        Else ->
+            self() ! Else,
+            ok
+    after 0 ->
+              ok
+    end.
+
+
 index_update_notifier(#db{name=DbName}, DDocId) ->
     index_update_notifier(DbName, DDocId);
 index_update_notifier(DbName, DDocId) ->
@@ -260,6 +284,7 @@ index_update_notifier(DbName, DDocId) ->
                     ok
             end),
     NotifierPid.
+
 
 %% acquire the background indexing task so it can eventually be started
 %% if the process close the background task will be automatically
