@@ -341,6 +341,19 @@ write_kvs(State, UpdateSeq, ViewKVs, DocIdKeys, Seqs, Log0) ->
     UpdateView = fun(#mrview{id_num=ViewId}=View, {ViewId, {KVs, SKVs}}) ->
         #mrview{seq_indexed=SIndexed, keyseq_indexed=KSIndexed} = View,
         ToRem = couch_util:dict_find(ViewId, ToRemByView, []),
+
+        lists:foreach(fun({{Key, DocId}, _Val}) ->
+                            couch_log:info("key indexed (~p): ~p;~p",
+                                           [ViewId, Key, DocId])
+                      end, KVs),
+
+        lists:foreach(fun({Key, DocId}) ->
+                            couch_log:info("key removed (~p): ~p;~p",
+                                           [ViewId, Key, DocId])
+                      end, ToRem),
+
+
+
         {ok, VBtree2} = couch_btree:add_remove(View#mrview.btree, KVs, ToRem),
         NewUpdateSeq = case VBtree2 =/= View#mrview.btree of
             true -> UpdateSeq;
@@ -352,8 +365,19 @@ write_kvs(State, UpdateSeq, ViewKVs, DocIdKeys, Seqs, Log0) ->
             SToRem = couch_util:dict_find(ViewId, SeqsToRemove, []),
             SToAdd = couch_util:dict_find(ViewId, SeqsToAdd, []),
             SKVs1 = SKVs ++ SToAdd,
+            %% index sequces added
+            lists:foreach(fun({{Seq, Key}, {DocId, Val, _Rev}}) ->
+                                  couch_log:info("sequences indexed (~p): ~p;~p;~p;~p",
+                                                 [ViewId, Key, Seq, DocId, Val])
+                          end, SKVs1),
+
 
             {ok, SeqBtree2} = if SIndexed ->
+                 lists:foreach(fun({Key, Seq, DocId}) ->
+                          couch_log:info("sequences removed (~p): ~p;~p;~p",
+                                         [ViewId, Key, Seq, DocId])
+                    end, SToRem),
+
                 RemSKs = lists:sort([{Seq, Key} || {Key, Seq, _} <- SToRem]),
                 couch_btree:add_remove(View#mrview.seq_btree,
                                        SKVs1, RemSKs);
