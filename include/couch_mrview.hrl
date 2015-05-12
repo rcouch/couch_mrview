@@ -10,6 +10,8 @@
 % License for the specific language governing permissions and limitations under
 % the License.
 
+-define(VERSION, 1).
+
 -record(mrst, {
     sig=nil,
     fd=nil,

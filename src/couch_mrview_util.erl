@@ -118,7 +118,7 @@ ddoc_to_mrst(DbName, #doc{id=Id, body={Fields}}) ->
         seq_indexed=SeqIndexed,
         keyseq_indexed=KeySeqIndexed
     },
-    SigInfo = {Views, Language, DesignOpts, couch_index_util:sort_lib(Lib)},
+    SigInfo = {?VERSION, Views, Language, DesignOpts, couch_index_util:sort_lib(Lib)},
     {ok, IdxState#mrst{sig=couch_util:md5(term_to_binary(SigInfo))}}.
 
 
