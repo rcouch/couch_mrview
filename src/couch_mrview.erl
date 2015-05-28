@@ -24,7 +24,7 @@
 -export([cleanup/1]).
 
 -include_lib("couch/include/couch_db.hrl").
--include_lib("couch_mrview/include/couch_mrview.hrl").
+-include("include/couch_mrview.hrl").
 
 -record(mracc, {
     db,
@@ -96,48 +96,17 @@ view_changes_since(Db, DDoc, VName, StartSeq, Fun, Acc) ->
 
 view_changes_since(Db, DDoc, VName, StartSeq, UserFun, Options, Acc) ->
     Args0 = make_view_changes_args(Options),
-    {ok, {_, View}, _, Args} = couch_mrview_util:get_view(Db, DDoc, VName, Args0),
-    #mrview{seq_indexed=SIndexed} = View,
-    IsKSQuery = is_key_byseq(Options),
-    case SIndexed of
-        true ->
-            OptList = make_view_changes_opts(StartSeq, Options, Args),
-            Btree = case IsKSQuery of
-                true -> View#mrview.key_byseq_btree;
-                _ -> View#mrview.seq_btree
-            end,
+    {ok, {_, View}, _, Args} = couch_mrview_util:get_view(Db, DDoc, VName,
+                                                          Args0),
+    OptList = make_view_changes_opts(StartSeq, Options, Args),
+    Btree = View#mrview.seq_btree,
 
-            %% wrap the function to make sure we only return the results
-            %% we want when we get changes for a key.
-            #mrargs{direction=Dir}=Args,
-            EndSeq = case Dir of
-                fwd -> 16#10000000;
-                rev -> 0
-            end,
-
-            WrapperFun = fun
-                ({{Seq, _Key, _DocId}, _Val}=KV, {fwd, LastSeq, Acc2})
-                        when Seq > LastSeq, Seq =< EndSeq ->
-                    {Go, Acc3} = UserFun(KV, Acc2),
-                    {Go, {fwd, Seq, Acc3}};
-                ({Seq, _Key, _DocId}=KV, {D, LastSeq, Acc2})
-                        when Seq < LastSeq, Seq >= EndSeq ->
-                    {Go, Acc3} = UserFun(KV, Acc2),
-                    {Go, {D, Seq, Acc3}};
-                (_Else, Acc2) ->
-                    {ok, Acc2}
-            end,
-
-            Acc0 = {Dir, StartSeq, Acc},
-            {_, _, AccOut} = lists:foldl(fun(Opts, Acc1) ->
-                        {ok, _R, {_, _, Acc2}} = couch_mrview_util:fold_changes(
-                                    Btree, WrapperFun, Acc1, Opts),
-                        {Dir, StartSeq, Acc2}
-                end, Acc0, OptList),
-            {ok, AccOut};
-        false ->
-           {error, seqs_not_indexed}
-    end.
+    AccOut = lists:foldl(fun(Opts, Acc1) ->
+                {ok, _R, Acc2} = couch_mrview_util:fold_changes(
+                                   Btree, UserFun, Acc1, Opts),
+                Acc2
+        end, Acc, OptList),
+    {ok, AccOut}.
 
 
 
@@ -148,25 +117,17 @@ count_view_changes_since(Db, DDoc, VName, SinceSeq, Options) ->
     Args0 = make_view_changes_args(Options),
     {ok, {_, View}, _, Args} = couch_mrview_util:get_view(Db, DDoc, VName,
                                                           Args0),
-    case View#mrview.seq_indexed of
-        true ->
-            OptList = make_view_changes_opts(SinceSeq, Options, Args),
-            Btree = case is_key_byseq(Options) of
-                true -> View#mrview.key_byseq_btree;
-                _ -> View#mrview.seq_btree
-            end,
-            lists:foldl(fun(Opts, Acc0) ->
-                            {ok, N} = couch_btree:fold_reduce(
+    OptList = make_view_changes_opts(SinceSeq, Options, Args),
+    Btree = View#mrview.seq_btree,
+    lists:foldl(fun(Opts, Acc0) ->
+                        {ok, N} = couch_btree:fold_reduce(
                                     Btree, fun(_SeqStart, PartialReds, 0) ->
-                                        {ok, couch_btree:final_reduce(
-                                                    Btree, PartialReds)}
-                                    end,
-                                0, Opts),
-                            Acc0 + N
-                    end, 0, OptList);
-        _ ->
-            {error, seqs_not_indexed}
-    end.
+                                                   {ok, couch_btree:final_reduce(
+                                                          Btree, PartialReds)}
+                                           end,
+                                    0, Opts),
+                        Acc0 + N
+                end, 0, OptList).
 
 
 get_info(Db, DDoc) ->
@@ -190,9 +151,9 @@ get_view_info(Db, DDoc, VName) ->
             couch_btree:full_reduce(SeqBtree)
     end,
 
-    {ok, [{seq_indexed, View#mrview.seq_indexed},
-          {update_seq, View#mrview.update_seq},
+    {ok, [{update_seq, View#mrview.update_seq},
           {purge_seq, View#mrview.purge_seq},
+          {group_seq, View#mrview.group_seq},
           {total_rows, TotalRows},
           {total_seqs, TotalSeqs}]}.
 
@@ -366,7 +327,9 @@ map_fold(KV, OffsetReds, #mracc{offset=undefined}=Acc) ->
     end;
 map_fold(_KV, _Offset, #mracc{limit=0}=Acc) ->
     {stop, Acc};
-map_fold({{Key, Id}, Val}, _Offset, Acc) ->
+map_fold({{Key, Id}, {removed, _Seq}}, _Offset, Acc) ->
+    {ok, Acc#mracc{last_go=ok}};
+map_fold({{Key, Id}, Val0}, _Offset, Acc) ->
     #mracc{
         db=Db,
         limit=Limit,
@@ -375,6 +338,11 @@ map_fold({{Key, Id}, Val}, _Offset, Acc) ->
         user_acc=UAcc0,
         args=Args
     } = Acc,
+    Val = case Val0 of
+              {Val1, _Seq} -> Val1;
+              _ -> Val0
+          end,
+
     Doc = case DI of
         #doc_info{} -> couch_mrview_util:maybe_load_doc(Db, DI, Args);
         _ -> couch_mrview_util:maybe_load_doc(Db, Id, Val, Args)

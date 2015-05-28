@@ -9,8 +9,10 @@
 % WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 % License for the specific language governing permissions and limitations under
 % the License.
+%
+-define(IVERSION, 1).
 
--define(VERSION, 1).
+-define(SEQ_MAX, 16#10000000).
 
 -record(mrst, {
     sig=nil,
@@ -20,14 +22,12 @@
     idx_name,
     language,
     design_opts=[],
-    seq_indexed=false,
-    keyseq_indexed=false,
     lib,
     views,
     id_btree=nil,
-    log_btree=nil,
     update_seq=0,
     purge_seq=0,
+    group_seq=0,
     first_build,
     partial_resp_pid,
     doc_acc,
@@ -41,23 +41,22 @@
     id_num,
     update_seq=0,
     purge_seq=0,
+    group_seq=0,
     map_names=[],
     reduce_funs=[],
     def,
     btree=nil,
     seq_btree=nil,
-    key_byseq_btree=nil,
-    seq_indexed=false,
-    keyseq_indexed=false,
     options=[]
+
 }).
 
 
 -record(mrheader, {
     seq=0,
     purge_seq=0,
+    group_seq=0,
     id_btree_state=nil,
-    log_btree_state=nil,
     view_states=nil
 }).
 
