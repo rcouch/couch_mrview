@@ -220,8 +220,9 @@ open_view(Db, Fd, Lang, {BTState, SeqBTState, USeq, PSeq}, View) ->
     ReduceFun =
         fun(reduce, KVs) ->
             KVs2 = detuple_kvs(expand_dups(KVs, []), []),
-            {ok, Result} = couch_query_servers:reduce(Lang, FunSrcs, KVs2),
-            {length(KVs2), Result};
+            KVs3 = [KV || [_Key, {V, _Seq}]=KV <- KVs2, V /= removed],
+            {ok, Result} = couch_query_servers:reduce(Lang, FunSrcs, KVs3),
+            {length(KVs3), Result};
         (rereduce, Reds) ->
             Count = lists:sum([Count0 || {Count0, _} <- Reds]),
             UsrReds = [UsrRedsList || {_, UsrRedsList} <- Reds],
