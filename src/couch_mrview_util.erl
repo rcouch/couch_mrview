@@ -753,7 +753,7 @@ changes_expand_dups([], Acc) ->
 changes_expand_dups([{{Seq, Key}, {DocId, {dups, Vals}}} | Rest], Acc) ->
     Expanded = [{{Seq, Key, DocId}, Val} || Val <- Vals],
     changes_expand_dups(Rest, Expanded ++ Acc);
-changes_expand_dups([{{Key, Seq}, {DocId, Val}} | Rest], Acc) ->
+changes_expand_dups([{{Seq, Key}, {Val, DocId}} | Rest], Acc) ->
     changes_expand_dups(Rest, [{{Seq, Key, DocId}, Val} | Acc]).
 
 maybe_load_doc(_Db, _DI, #mrargs{include_docs=false}) ->
