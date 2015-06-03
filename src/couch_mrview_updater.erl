@@ -321,7 +321,7 @@ write_kvs(State, UpdateSeq, ViewKVs, DocIdKeys, GroupSeq0) ->
                 couch_log:debug("indexing seqs, view ~p~n - add: ~p~n - rem:~p~n", [ViewId, SKVs, SToDel]),
                 couch_btree:add_remove(View#mrview.seq_btree, SKVs, SToDel);
             false ->
-                couch_log:debug("no seq index to update~", []),
+                couch_log:debug("no seq index to update", []),
                 {ok, View#mrview.seq_btree}
         end,
 
