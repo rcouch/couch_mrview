@@ -47,6 +47,7 @@
     def,
     btree=nil,
     seq_btree=nil,
+    kseq_btree=nil,
     options=[]
 
 }).

@@ -143,7 +143,11 @@ compact_view(View, EmptyView, BufferSize, Acc0) ->
                                EmptyView#mrview.seq_btree,
                                BufferSize, Acc1),
 
-    {EmptyView#mrview{btree=NewBt, seq_btree=NewSeqBt}, Acc2}.
+    {NewKSeqBt, Acc2} = compact_view_btree(View#mrview.kseq_btree,
+                               EmptyView#mrview.kseq_btree,
+                               BufferSize, Acc1),
+
+    {EmptyView#mrview{btree=NewBt, seq_btree=NewSeqBt, kseq_btree=NewKSeqBt}, Acc2}.
 
 compact_view_btree(Btree, EmptyBtree, BufferSize, Acc0) ->
     Fun = fun(KV, #acc{btree = Bt, kvs = Kvs, kvs_size = KvsSize} = Acc) ->

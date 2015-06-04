@@ -95,15 +95,19 @@ view_changes_since(Db, DDoc, VName, StartSeq, Fun, Acc) ->
     view_changes_since(Db, DDoc, VName, StartSeq, Fun, [], Acc).
 
 view_changes_since(Db, DDoc, VName, StartSeq, UserFun, Options, Acc) ->
-    Args0 = make_view_changes_args(Options),
+    IdxType = changes_idx(Options),
+    Args0 = make_view_changes_args(Options, IdxType),
     {ok, {_, View}, _, Args} = couch_mrview_util:get_view(Db, DDoc, VName,
                                                           Args0),
-    OptList = make_view_changes_opts(StartSeq, Options, Args),
-    Btree = View#mrview.seq_btree,
+    OptList = make_view_changes_opts(StartSeq, Options, Args, IdxType),
+    Btree = case IdxType of
+                by_seq -> View#mrview.seq_btree;
+                by_key -> View#mrview.kseq_btree
+            end,
 
     AccOut = lists:foldl(fun(Opts, Acc1) ->
                 {ok, _R, Acc2} = couch_mrview_util:fold_changes(
-                                   Btree, UserFun, Acc1, Opts),
+                                   Btree, UserFun, Acc1, Opts, IdxType),
                 Acc2
         end, Acc, OptList),
     {ok, AccOut}.
@@ -114,11 +118,16 @@ count_view_changes_since(Db, DDoc, VName, SinceSeq) ->
     count_view_changes_since(Db, DDoc, VName, SinceSeq, []).
 
 count_view_changes_since(Db, DDoc, VName, SinceSeq, Options) ->
-    Args0 = make_view_changes_args(Options),
+    IdxType = changes_idx(Options),
+    Args0 = make_view_changes_args(Options, IdxType),
     {ok, {_, View}, _, Args} = couch_mrview_util:get_view(Db, DDoc, VName,
                                                           Args0),
-    OptList = make_view_changes_opts(SinceSeq, Options, Args),
-    Btree = View#mrview.seq_btree,
+    OptList = make_view_changes_opts(SinceSeq, Options, Args, IdxType),
+    Btree = case IdxType of
+                by_seq -> View#mrview.seq_btree;
+                by_key -> View#mrview.kseq_btree
+            end,
+
     lists:foldl(fun(Opts, Acc0) ->
                         {ok, N} = couch_btree:fold_reduce(
                                     Btree, fun(_SeqStart, PartialReds, 0) ->
@@ -139,7 +148,6 @@ get_info(Db, DDoc) ->
 get_view_info(Db, DDoc, VName) ->
     {ok, {_, View}, _, _Args} = couch_mrview_util:get_view(Db, DDoc, VName,
                                                               #mrargs{}),
-
     %% get the total number of rows
     {ok, TotalRows} =  couch_mrview_util:get_row_count(View),
 
@@ -495,24 +503,22 @@ lookup_index(Key) ->
     couch_util:get_value(Key, Index).
 
 
-is_key_byseq(Options) ->
-    lists:any(fun({K, _}) ->
+changes_idx(Options) ->
+    ByKey = lists:any(fun({K, _}) ->
                 lists:member(K, [start_key, end_key, start_key_docid,
                                  end_key_docid, keys, queries])
-        end, Options).
-
-make_view_changes_args(Options) ->
-    case is_key_byseq(Options) of
-        true ->
-            to_mrargs(Options);
-        false ->
-            #mrargs{}
+        end, Options),
+    case ByKey of
+        true -> by_key;
+        false -> by_seq
     end.
 
-make_view_changes_opts(StartSeq, Options, Args) ->
-    case is_key_byseq(Options) of
-        true ->
-            couch_mrview_util:changes_key_opts(StartSeq, Args);
-        false ->
-            [[{start_key, {StartSeq + 1, <<>>}}] ++ Options]
-    end.
+make_view_changes_args(Options, by_key) ->
+    to_mrargs(Options);
+make_view_changes_args(Option, _) ->
+    #mrargs{}.
+
+make_view_changes_opts(StartSeq, Options, Args, by_key) ->
+    couch_mrview_util:changes_key_opts(StartSeq, Args);
+make_view_changes_opts(StartSeq, Options, Args, _) ->
+    [[{start_key, {StartSeq + 1, <<>>}}] ++ Options].

@@ -26,7 +26,7 @@
 -export([validate_args/1]).
 -export([maybe_load_doc/3, maybe_load_doc/4]).
 -export([changes_key_opts/2]).
--export([fold_changes/4]).
+-export([fold_changes/5]).
 -export([to_key_seq/1]).
 
 -define(MOD, couch_mrview_index).
@@ -177,7 +177,7 @@ init_state(Db, Fd, #mrst{views=Views}=State, nil) ->
         group_seq=0,
         purge_seq=couch_db:get_purge_seq(Db),
         id_btree_state=nil,
-        view_states=[{nil, nil, 0, 0} || _ <- Views]
+        view_states=[{nil, nil, nil, 0, 0, 0} || _ <- Views]
     },
     init_state(Db, Fd, State, Header);
 init_state(Db, Fd, State, Header) ->
@@ -195,8 +195,8 @@ init_state(Db, Fd, State, Header) ->
     } = Header,
 
     StateUpdate = fun
-        ({_, _,  _, _}=St) -> St;
-        (St) -> {St, nil, 0, 0}
+        ({_, _,  _, _, _, _}=St) -> St;
+        (St) -> {St, nil, nil, 0, 0, 0}
     end,
     ViewStates2 = lists:map(StateUpdate, ViewStates),
 
@@ -215,7 +215,8 @@ init_state(Db, Fd, State, Header) ->
         views=Views2
     }.
 
-open_view(Db, Fd, Lang, {BTState, SeqBTState, USeq, PSeq}, View) ->
+open_view(Db, Fd, Lang, {BTState, SeqBTState, KSeqBTState, USeq, PSeq, GSeq},
+          View) ->
     FunSrcs = [FunSrc || {_Name, FunSrc} <- View#mrview.reduce_funs],
     ReduceFun =
         fun(reduce, KVs) ->
@@ -246,10 +247,26 @@ open_view(Db, Fd, Lang, {BTState, SeqBTState, USeq, PSeq}, View) ->
     ViewSeqBtOpts = [{reduce, BySeqReduceFun},
                      {compression, couch_db:compression(Db)}],
     {ok, SeqBtree} = couch_btree:open(SeqBTState, Fd, ViewSeqBtOpts),
+
+    KSeqReduceFun = fun
+                        (reduce, KVs) ->
+                            length(KVs);
+                        (rereduce, Reds) ->
+                            lists:sum(Reds)
+                    end,
+
+    ViewKSeqBtOpts = [{less, Less},
+                      {reduce, KSeqReduceFun},
+                      {compression, couch_db:compression(Db)}],
+
+    {ok, KSeqBtree} = couch_btree:open(KSeqBTState, Fd, ViewKSeqBtOpts),
+
     View#mrview{btree=Btree,
                 seq_btree=SeqBtree,
+                kseq_btree=KSeqBtree,
                 update_seq=USeq,
-                purge_seq=PSeq}.
+                purge_seq=PSeq,
+                group_seq=GSeq}.
 
 
 temp_view_to_ddoc({Props}) ->
@@ -327,9 +344,9 @@ fold_fun(Fun, [KV|Rest], {KVReds, Reds}, Acc) ->
     end.
 
 
-fold_changes(Bt, Fun, Acc, Opts) ->
+fold_changes(Bt, Fun, Acc, Opts, Type) ->
     WrapperFun = fun(KV, _Reds, Acc2) ->
-        fold_changes_fun(Fun, changes_expand_dups([KV], []), Acc2)
+        fold_changes_fun(Fun, changes_expand_dups([KV], Type, []), Acc2)
     end,
     {ok, _LastRed, _Acc} = couch_btree:fold(Bt, WrapperFun, Acc, Opts).
 
@@ -539,8 +556,10 @@ make_header(State) ->
     ViewStates = lists:foldr(fun(V, Acc) ->
                                      [{couch_btree:get_state(V#mrview.btree),
                                        couch_btree:get_state(V#mrview.seq_btree),
+                                       couch_btree:get_state(V#mrview.kseq_btree),
                                        V#mrview.update_seq,
-                                       V#mrview.purge_seq} | Acc]
+                                       V#mrview.purge_seq,
+                                       V#mrview.group_seq} | Acc]
                              end, [], Views),
 
     #mrheader{
@@ -606,7 +625,8 @@ reset_state(State) ->
       update_seq=0,
       id_btree=nil,
       views=[View#mrview{btree=nil,
-                         seq_btree=nil}
+                         seq_btree=nil,
+                         kseq_btree=nil}
              || View <- State#mrst.views]
      }.
 
@@ -693,9 +713,9 @@ changes_key_opts(StartSeq, #mrargs{keys=Keys, direction=Dir}=Args, Extra) ->
 
 
 changes_skey_opts(StartSeq, #mrargs{start_key=undefined}) ->
-    [{start_key, {StartSeq+1, <<>>}}];
+    [{start_key, {<<>>, StartSeq+1}}];
 changes_skey_opts(StartSeq, #mrargs{start_key=SKey}) ->
-    [{start_key, {StartSeq+1, SKey}}].
+    [{start_key, {SKey, StartSeq+1}}].
 
 
 changes_ekey_opts(_StartSeq, #mrargs{end_key=undefined}) ->
@@ -708,16 +728,17 @@ changes_ekey_opts(_StartSeq, #mrargs{end_key=EKey,
     end,
 
     case Args#mrargs.inclusive_end of
-        true -> [{end_key, {EndSeq, EKey}}];
-        false -> [{end_key_gt, {EndSeq, EKey}}]
+        true -> [{end_key, {EKey, EndSeq}}];
+        false -> [{end_key_gt, {EKey, EndSeq}}]
     end.
 
 
 
 calculate_data_size(IdBt, Views) ->
-    SumFun = fun(#mrview{btree=Bt, seq_btree=SBt}, Acc) ->
+    SumFun = fun(#mrview{btree=Bt, seq_btree=SBt, kseq_btree=KSBt}, Acc) ->
         Size0 = sum_btree_sizes(Acc, couch_btree:size(Bt)),
-        sum_btree_sizes(Size0, couch_btree:size(SBt))
+        Size1 = sum_btree_sizes(Size0, couch_btree:size(SBt)),
+        sum_btree_sizes(Size1, couch_btree:size(KSBt))
     end,
     Size = lists:foldl(SumFun, couch_btree:size(IdBt), Views),
     {ok, Size}.
@@ -748,13 +769,18 @@ expand_dups([KV | Rest], Acc) ->
     expand_dups(Rest, [KV | Acc]).
 
 
-changes_expand_dups([], Acc) ->
+changes_expand_dups([], _Type, Acc) ->
     lists:reverse(Acc);
-changes_expand_dups([{{Seq, Key}, {DocId, {dups, Vals}}} | Rest], Acc) ->
+changes_expand_dups([{{Key, Seq}, {DocId, {dups, Vals}}} | Rest], by_key, Acc) ->
     Expanded = [{{Seq, Key, DocId}, Val} || Val <- Vals],
-    changes_expand_dups(Rest, Expanded ++ Acc);
-changes_expand_dups([{{Seq, Key}, {Val, DocId}} | Rest], Acc) ->
-    changes_expand_dups(Rest, [{{Seq, Key, DocId}, Val} | Acc]).
+    changes_expand_dups(Rest, by_key, Expanded ++ Acc);
+changes_expand_dups([{{Seq, Key}, {DocId, {dups, Vals}}} | Rest], Type, Acc) ->
+    Expanded = [{{Seq, Key, DocId}, Val} || Val <- Vals],
+    changes_expand_dups(Rest, Type, Expanded ++ Acc);
+changes_expand_dups([{{Key, Seq}, {Val, DocId}} | Rest], by_key, Acc) ->
+    changes_expand_dups(Rest, by_key, [{{Seq, Key, DocId}, Val} | Acc]);
+changes_expand_dups([{{Seq, Key}, {Val, DocId}} | Rest], Type, Acc) ->
+    changes_expand_dups(Rest, Type, [{{Seq, Key, DocId}, Val} | Acc]).
 
 maybe_load_doc(_Db, _DI, #mrargs{include_docs=false}) ->
     [];

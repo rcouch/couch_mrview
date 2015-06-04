@@ -65,17 +65,18 @@ purge(_Db, PurgeSeq, PurgedIdRevs, State) ->
 
     MakeDictFun = fun
         ({ok, {DocId, ViewNumRowKeys}}, DictAcc) ->
-            FoldFun = fun({ViewNum, {Key, Seq}}, {DK1, DS1}) ->
-                    DK2 = dict:append(ViewNum, {Key, DocId}, DK1),
-                    DS2 = dict:append(ViewNum, {Seq, Key}, DS1),
-                    {DK2, DS2}
+            FoldFun = fun({ViewNum, {Key, Seq}}, {DK1, DS1, DKS1}) ->
+                DK2 = dict:append(ViewNum, {Key, DocId}, DK1),
+                DS2 = dict:append(ViewNum, {Seq, Key}, DS1),
+                DKS2 = dict:append(ViewNum, {Key, Seq}, DKS1),
+                {DK2, DS2, DKS2}
             end,
             lists:foldl(FoldFun, DictAcc, ViewNumRowKeys);
         ({not_found, _}, DictAcc) ->
             DictAcc
     end,
-    DictAcc0 = {dict:new(), dict:new()},
-    {KeysToRemove, SeqsToRemove} = lists:foldl(MakeDictFun, DictAcc0, Lookups),
+    DictAcc0 = {dict:new(), dict:new(), dict:new()},
+    {KeysToRemove, SeqsToRemove, KSeqsToRemove} = lists:foldl(MakeDictFun, DictAcc0, Lookups),
 
     RemKeysFun = fun(#mrview{id_num=ViewId}=View) ->
         ToRem = couch_util:dict_find(ViewId, KeysToRemove, []),
@@ -85,17 +86,23 @@ purge(_Db, PurgeSeq, PurgedIdRevs, State) ->
                                       _ -> {View#mrview.purge_seq, false}
                                   end,
 
-        {ok, SeqBtree2} = case IsPurged of
-                              true ->
-                                  SToRem = dict:find(ViewId, SeqsToRemove, []),
-                                  couch_btree:add_remove(View#mrview.seq_btree,
-                                                         [], SToRem);
-                              false ->
-                                  {ok, View#mrview.seq_btree}
-                          end,
+        {ok, SeqBtree2, KSeqBtree2} =
+        case IsPurged of
+            true ->
+                SToRem = dict:find(ViewId, SeqsToRemove, []),
+                KSToRem = dict:find(ViewId, KSeqsToRemove, []),
+                {ok, SBt} = couch_btree:add_remove(View#mrview.seq_btree, [],
+                                                   SToRem),
+                {ok, KSBt} = couch_btree:add_remove(View#mrview.kseq_btree, [],
+                                                   KSToRem),
+                {ok, SBt, KSBt};
+            false ->
+                {ok, View#mrview.seq_btree, View#mrview.kseq_btree}
+        end,
 
         View#mrview{btree=VBtree2,
                     seq_btree=SeqBtree2,
+                    kseq_btree=KSeqBtree2,
                     purge_seq=NewPurgeSeq}
 
     end,
@@ -269,7 +276,7 @@ insert_results(DocId, Seq, Rev, [KVs | RKVs], [{Id, VKVs} | RVKVs], VKVAcc,
             GroupSeq3 = GroupSeq1 + 2,
             Dups = [{Val1, GroupSeq1 +1}, {Val2, GroupSeq3}],
             {[{Key, {dups, Dups}} | Rest], IdKeys, GroupSeq3};
-        ({Key, Value}=KV, {Rest, IdKeys, GroupSeq1}) ->
+        ({Key, Value}, {Rest, IdKeys, GroupSeq1}) ->
             GroupSeq3 = GroupSeq1 + 1,
             {[{Key, {Value, GroupSeq3}} | Rest], [{Id, {Key, GroupSeq3}} | IdKeys], GroupSeq3}
     end,
@@ -295,14 +302,16 @@ write_kvs(State, UpdateSeq, ViewKVs, DocIdKeys, GroupSeq0) ->
                                                                       KVs,
                                                                       RemKVs]),
         ToAdd = KVs ++ RemKVs,
-        {ToFind, SKVs, Seqs} = lists:foldl(fun({{Key, DocId}=K, {Val, Seq}},
-                                               {Keys1, SKVs1, Seqs1}) ->
-                                                   SRow = {{Seq, Key}, {Val, DocId}},
-                                                   SKVs2 = [SRow | SKVs1],
-                                                   Keys2 = [K | Keys1],
-                                                   Seqs2 = [Seq | Seqs1],
-                                                   {Keys2, SKVs2, Seqs2}
-                                           end, {[], [], []}, ToAdd),
+        {ToFind, SKVs, KSKVs, Seqs} =
+        lists:foldl(fun({{Key, DocId}=K, {Val, Seq}},{Keys1, SKVs1, KSKVs1, Seqs1}) ->
+                            SRow = {{Seq, Key}, {Val, DocId}},
+                            KSRow = {{Key, Seq}, {Val, DocId}},
+                            SKVs2 = [SRow | SKVs1],
+                            KSKVs2 = [KSRow | KSKVs1],
+                            Keys2 = [K | Keys1],
+                            Seqs2 = [Seq | Seqs1],
+                            {Keys2, SKVs2, KSKVs2, Seqs2}
+                    end, {[], [], [], []}, ToAdd),
         %% max view sequence
         ViewSeq = lists:max(Seqs),
 
@@ -315,18 +324,24 @@ write_kvs(State, UpdateSeq, ViewKVs, DocIdKeys, GroupSeq0) ->
             _ -> {View#mrview.update_seq, View#mrview.group_seq, false}
         end,
 
-        {ok, VSeqBtree2} = case IsUpdated of
+        {ok, VSeqBtree2, VKSeqBtree2} = case IsUpdated of
             true ->
-                SToDel = removed_seqs(RemovedKeys, []),
+                {SToDel, KSToDel} = removed_seqs(RemovedKeys, [], []),
                 couch_log:debug("indexing seqs, view ~p~n - add: ~p~n - rem:~p~n", [ViewId, SKVs, SToDel]),
-                couch_btree:add_remove(View#mrview.seq_btree, SKVs, SToDel);
+                {ok, SBt} = couch_btree:add_remove(View#mrview.seq_btree, SKVs,
+                                                   SToDel),
+
+                {ok, KSBt} = couch_btree:add_remove(View#mrview.kseq_btree, KSKVs,
+                                                    KSToDel),
+                {ok, SBt, KSBt};
             false ->
                 couch_log:debug("no seq index to update", []),
-                {ok, View#mrview.seq_btree}
+                {ok, View#mrview.seq_btree, View#mrview.kseq_btree}
         end,
 
         View#mrview{btree=VBtree2,
                     seq_btree=VSeqBtree2,
+                    kseq_btree=VKSeqBtree2,
                     update_seq=NewUpdateSeq,
                     group_seq=NewGroupSeq}
     end,
@@ -401,12 +416,12 @@ insert_removed(R1, [], Seq, {Acc, Dict}) ->
                         {Acc1, Dict1, Seq1}
                 end, {Acc, Dict, Seq}, R1).
 
-removed_seqs([], Acc) ->
-    Acc;
-removed_seqs([{ok, {{Key, _DocId}, {_Val, Seq}}} | Rest], Acc) ->
-    removed_seqs(Rest, [{Seq, Key} | Acc]);
-removed_seqs([_ | Rest], Acc) ->
-    removed_seqs(Rest, Acc).
+removed_seqs([], Acc, KAcc) ->
+    {Acc, KAcc};
+removed_seqs([{ok, {{Key, _DocId}, {_Val, Seq}}} | Rest], Acc, KAcc) ->
+    removed_seqs(Rest, [{Seq, Key} | Acc], [{Key, Seq} | KAcc]);
+removed_seqs([_ | Rest], Acc, KAcc) ->
+    removed_seqs(Rest, Acc, KAcc).
 
 send_partial(Pid, State) when is_pid(Pid) ->
     gen_server:cast(Pid, {new_state, State});
