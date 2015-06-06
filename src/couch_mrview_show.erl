@@ -19,7 +19,7 @@
 ]).
 
 -include_lib("couch/include/couch_db.hrl").
--include_lib("couch_mrview/include/couch_mrview.hrl").
+-include("include/couch_mrview.hrl").
 
 -record(lacc, {
     db,

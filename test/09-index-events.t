@@ -14,7 +14,7 @@
 % the License.
 
 main(_) ->
-    etap:plan(5),
+    etap:plan(4),
     case (catch test()) of
         ok ->
             etap:end_tests();
@@ -28,17 +28,9 @@ main(_) ->
 test() ->
     test_util:start_couch(),
     {ok, Db} = couch_mrview_test_util:init_db(<<"foo">>, changes),
-    test_info(Db),
     test_update_event(Db),
     test_delete_event(Db),
     test_util:stop_couch(),
-    ok.
-
-test_info(Db) ->
-    {ok, Info} = couch_mrview:get_info(Db, <<"_design/bar">>),
-    etap:is(getval(update_options, Info), [<<"keyseq_indexed">>,
-                                           <<"seq_indexed">>],
-            "update options OK"),
     ok.
 
 test_update_event(Db) ->

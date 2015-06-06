@@ -39,6 +39,7 @@ delete_db(Name) ->
 
 save_docs(Db, Docs) ->
     {ok, _} = couch_db:update_docs(Db, Docs, []),
+    couch_db:ensure_full_commit(Db),
     couch_db:reopen(Db).
 
 

@@ -41,33 +41,33 @@ test() ->
 
 test_normal_changes(Db) ->
     Result = run_query(Db, []),
-    Expect = {ok, 11, [
-                {{2, 1, <<"1">>}, 1},
-                {{3, 10, <<"10">>}, 10},
-                {{4, 2, <<"2">>}, 2},
-                {{5, 3, <<"3">>}, 3},
-                {{6, 4, <<"4">>}, 4},
-                {{7, 5, <<"5">>}, 5},
-                {{8, 6, <<"6">>}, 6},
-                {{9, 7, <<"7">>}, 7},
-                {{10, 8, <<"8">>}, 8},
-                {{11, 9, <<"9">>}, 9}
+    Expect = {ok, 10, [
+                {{1, 1, <<"1">>}, 1},
+                {{2, 10, <<"10">>}, 10},
+                {{3, 2, <<"2">>}, 2},
+                {{4, 3, <<"3">>}, 3},
+                {{5, 4, <<"4">>}, 4},
+                {{6, 5, <<"5">>}, 5},
+                {{7, 6, <<"6">>}, 6},
+                {{8, 7, <<"7">>}, 7},
+                {{9, 8, <<"8">>}, 8},
+                {{10, 9, <<"9">>}, 9}
     ]},
     etap:is(Result, Expect, "normal changes worked.").
 
 test_stream_once(Db) ->
     Result = run_query(Db, [{stream, once}]),
-    Expect = {ok, 11, [
-                {{2, 1, <<"1">>}, 1},
-                {{3, 10, <<"10">>}, 10},
-                {{4, 2, <<"2">>}, 2},
-                {{5, 3, <<"3">>}, 3},
-                {{6, 4, <<"4">>}, 4},
-                {{7, 5, <<"5">>}, 5},
-                {{8, 6, <<"6">>}, 6},
-                {{9, 7, <<"7">>}, 7},
-                {{10, 8, <<"8">>}, 8},
-                {{11, 9, <<"9">>}, 9}
+    Expect = {ok, 10, [
+                {{1, 1, <<"1">>}, 1},
+                {{2, 10, <<"10">>}, 10},
+                {{3, 2, <<"2">>}, 2},
+                {{4, 3, <<"3">>}, 3},
+                {{5, 4, <<"4">>}, 4},
+                {{6, 5, <<"5">>}, 5},
+                {{7, 6, <<"6">>}, 6},
+                {{8, 7, <<"7">>}, 7},
+                {{9, 8, <<"8">>}, 8},
+                {{10, 9, <<"9">>}, 9}
     ]},
     etap:is(Result, Expect, "stream once since 0 worked.").
 
@@ -75,7 +75,7 @@ test_stream_once(Db) ->
 test_stream_once_since(Db) ->
     Self = self(),
     spawn(fun() ->
-                Result = run_query(Db, [{since, 11},
+                Result = run_query(Db, [{since, 10},
                                         {stream, once}]),
                 Self ! {result, Result}
         end),
@@ -86,7 +86,7 @@ test_stream_once_since(Db) ->
                 couch_mrview:refresh(Db1, <<"_design/bar">>)
         end),
 
-    Expect = {ok,12,[{{12,11,<<"11">>},11}]},
+    Expect = {ok,11,[{{11,11,<<"11">>},11}]},
 
     receive
         {result, Result} ->
@@ -99,7 +99,7 @@ test_stream_once_since(Db) ->
 test_stream_once_timeout(Db) ->
     Self = self(),
     spawn(fun() ->
-                Result = run_query(Db, [{since, 12},
+                Result = run_query(Db, [{since, 11},
                                         {stream, once},
                                         {timeout, 3000}]),
                 Self ! {result, Result}
@@ -107,7 +107,7 @@ test_stream_once_timeout(Db) ->
 
 
 
-    Expect = {ok, 12, []},
+    Expect = {ok, 11, []},
 
     receive
         {result, Result} ->
@@ -119,7 +119,7 @@ test_stream_once_timeout(Db) ->
 test_stream_once_heartbeat(Db) ->
     Self = self(),
     spawn(fun() ->
-                Result = run_query(Db, [{since, 12},
+                Result = run_query(Db, [{since, 11},
                                         {stream, once},
                                         {heartbeat, 1000}]),
                 Self ! {result, Result}
@@ -131,16 +131,10 @@ test_stream_once_heartbeat(Db) ->
                 couch_mrview:refresh(Db1, <<"_design/bar">>)
         end),
 
-    Expect = {ok,13,[heartbeat,
-                     heartbeat,
-                     heartbeat,
-                     {{13,12,<<"12">>},12}]},
-
-
-
     receive
         {result, Result} ->
-            etap:is(Result, Expect, "heartbeat OK.")
+            {ok, 12, RList} = Result,
+            etap:is(lists:member(heartbeat, RList), true, "heartbeat OK.")
     after 5000 ->
             io:format("never got the change", [])
     end.
@@ -149,7 +143,7 @@ test_stream_once_heartbeat(Db) ->
 test_stream(Db) ->
     Self = self(),
     spawn(fun() ->
-                Result = run_query(Db, [{since, 13},
+                Result = run_query(Db, [{since, 12},
                                         stream,
                                         {timeout, 3000}]),
                 Self ! {result, Result}
@@ -163,8 +157,8 @@ test_stream(Db) ->
                 couch_mrview:refresh(Db2, <<"_design/bar">>)
         end),
 
-    Expect = {ok, 15,[{{14,13,<<"13">>},13},
-                     {{15,14,<<"14">>},14}]},
+    Expect = {ok, 14,[{{13,13,<<"13">>},13},
+                     {{14,14,<<"14">>},14}]},
 
     receive
         {result, Result} ->
@@ -175,15 +169,15 @@ test_stream(Db) ->
 
 
 test_indexer(Db) ->
-    Result = run_query(Db, [{since, 14}, refresh]),
-    Expect = {ok, 15, [{{15,14,<<"14">>},14}]},
+    Result = run_query(Db, [{since, 13}, refresh]),
+    Expect = {ok, 14, [{{14,14,<<"14">>},14}]},
     etap:is(Result, Expect, "refresh index by hand OK."),
 
     {ok, Db1} = save_doc(Db, 15),
     timer:sleep(1500),
-    Result1 = run_query(Db1, [{since, 14}], false),
-    Expect1 = {ok, 16, [{{15,14,<<"14">>},14},
-                       {{16,15,<<"15">>},15}]},
+    Result1 = run_query(Db1, [{since, 13}], false),
+    Expect1 = {ok, 15, [{{14,14,<<"14">>},14},
+                       {{15,15,<<"15">>},15}]},
     etap:is(Result1, Expect1, "changes indexed in background OK."),
     ok.
 
@@ -191,7 +185,7 @@ test_indexer(Db) ->
 test_infinity_timeout(Db) ->
     Self = self(),
     spawn(fun() ->
-                  Result = run_infinity_query(Db, [{since, 16},
+                  Result = run_infinity_query(Db, [{since, 15},
                                                    stream,
                                                    {timeout, infinity}], true),
                   Self ! {result, Result}
@@ -203,7 +197,7 @@ test_infinity_timeout(Db) ->
                 couch_mrview:refresh(Db1, <<"_design/bar">>)
         end),
 
-    Expect = {ok, 17,[{{17, 16, <<"16">>}, 16}]},
+    Expect = {ok, 16,[{{16, 16, <<"16">>}, 16}]},
 
     receive
         {result, Result} ->
@@ -228,8 +222,8 @@ run_query(Db, Opts, Refresh) ->
             {ok, LastSeq, Acc};
         (heartbeat, Acc) ->
             {ok, [heartbeat | Acc]};
-        ({Info, {Val, _Rev}}, Acc) ->
-            {ok, [{Info, Val} | Acc]}
+        (KV, Acc) ->
+            {ok, [KV | Acc]}
     end,
     case Refresh of
         true ->
@@ -248,8 +242,8 @@ run_infinity_query(Db, Opts, Refresh) ->
             {ok, LastSeq, Acc};
         (heartbeat, Acc) ->
             {ok, [heartbeat | Acc]};
-        ({Info, {Val, _Rev}}, Acc) ->
-            {stop, [{Info, Val} | Acc]}
+        (KV, Acc) ->
+            {stop, [KV | Acc]}
     end,
     case Refresh of
         true ->

@@ -19,7 +19,7 @@
 -export([compact/3, swap_compacted/2]).
 
 -include_lib("couch/include/couch_db.hrl").
--include_lib("couch_mrview/include/couch_mrview.hrl").
+-include("include/couch_mrview.hrl").
 
 
 get(Property, State) ->
@@ -38,51 +38,30 @@ get(Property, State) ->
             Opts = State#mrst.design_opts,
             IncDesign = couch_util:get_value(<<"include_design">>, Opts, false),
             LocalSeq = couch_util:get_value(<<"local_seq">>, Opts, false),
-            SeqIndexed = couch_util:get_value(<<"seq_indexed">>, Opts, false),
-            %% if we index by seq keyseq_indexed is also true by default
-            KeySeqDefault = case SeqIndexed of
-                                true -> true;
-                                _Else -> false
-                            end,
-            KeySeqIndexed = couch_util:get_value(<<"keyseq_indexed">>, Opts,
-                                                 KeySeqDefault),
             if IncDesign -> [include_design]; true -> [] end
-                ++ if LocalSeq -> [local_seq]; true -> [] end
-                ++ if KeySeqIndexed -> [keyseq_indexed]; true -> [] end
-                ++ if SeqIndexed -> [seq_indexed]; true -> [] end;
+                ++ if LocalSeq -> [local_seq]; true -> [] end;
         info ->
             #mrst{
                 fd = Fd,
                 sig = Sig,
                 id_btree = IdBtree,
-                log_btree = LogBtree,
                 language = Lang,
                 update_seq = UpdateSeq,
                 purge_seq = PurgeSeq,
+                group_seq = GroupSeq,
                 views = Views,
                 design_opts = Opts
             } = State,
             {ok, Size} = couch_file:bytes(Fd),
-            {ok, DataSize} = couch_mrview_util:calculate_data_size(IdBtree,
-                                                                   LogBtree,
-                                                                   Views),
+            {ok, DataSize} = couch_mrview_util:calculate_data_size(IdBtree, Views),
 
 
             IncDesign = couch_util:get_value(<<"include_design">>, Opts, false),
             LocalSeq = couch_util:get_value(<<"local_seq">>, Opts, false),
-            SeqIndexed = couch_util:get_value(<<"seq_indexed">>, Opts, false),
-            KeySeqDefault = case SeqIndexed of
-                                true -> true;
-                                Else -> false
-                            end,
-            KeySeqIndexed = couch_util:get_value(<<"keyseq_indexed">>, Opts,
-                                                 KeySeqDefault),
+
             UpdateOptions =
                 if IncDesign -> [<<"include_design">>]; true -> [] end
-                ++ if LocalSeq -> [<<"local_seq">>]; true -> [] end
-                ++ if KeySeqIndexed -> [<<"keyseq_indexed">>]; true -> [] end
-                ++ if SeqIndexed -> [<<"seq_indexed">>]; true -> [] end,
-
+                ++ if LocalSeq -> [<<"local_seq">>]; true -> [] end,
 
             {ok, [
                 {signature, list_to_binary(couch_index_util:hexsig(Sig))},
@@ -91,6 +70,7 @@ get(Property, State) ->
                 {data_size, DataSize},
                 {update_seq, UpdateSeq},
                 {purge_seq, PurgeSeq},
+                {group_seq, GroupSeq},
                 {update_options, UpdateOptions}
             ]};
         Other ->
@@ -109,29 +89,9 @@ open(Db, State) ->
     } = State,
     IndexFName = couch_mrview_util:index_file(DbName, Sig),
 
-    % If we are upgrading from <=1.2.x, we upgrade the view
-    % index file on the fly, avoiding an index reset.
-    %
-    % OldSig is `ok` if no upgrade happened.
-    %
-    % To remove suppport for 1.2.x auto-upgrades in the
-    % future, just remove the next line and the code
-    % between "upgrade code for <= 1.2.x" and
-    % "end upgrade code for <= 1.2.x" and the corresponding
-    % code in couch_mrview_util
-
-    OldSig = couch_mrview_util:maybe_update_index_file(State),
-
     case couch_mrview_util:open_file(IndexFName) of
         {ok, Fd} ->
             case (catch couch_file:read_header(Fd)) of
-                % upgrade code for <= 1.2.x
-                {ok, {OldSig, Header}} ->
-                    % Matching view signatures.
-                    NewSt = couch_mrview_util:init_state(Db, Fd, State, Header),
-                    {ok, RefCounter} = couch_ref_counter:start([Fd]),
-                    {ok, NewSt#mrst{refc=RefCounter}};
-                % end of upgrade code for <= 1.2.x
                 {ok, {Sig, Header}} ->
                     % Matching view signatures.
                     NewSt = couch_mrview_util:init_state(Db, Fd, State, Header),
