@@ -67,7 +67,7 @@ purge(_Db, PurgeSeq, PurgedIdRevs, State) ->
         ({ok, {DocId, ViewNumRowKeys}}, DictAcc) ->
             FoldFun = fun({ViewNum, {Key, Seq}}, {DK1, DS1, DKS1}) ->
                 DK2 = dict:append(ViewNum, {Key, DocId}, DK1),
-                DS2 = dict:append(ViewNum, {Seq, Key}, DS1),
+                DS2 = dict:append(ViewNum, Seq, DS1),
                 DKS2 = dict:append(ViewNum, {Key, Seq}, DKS1),
                 {DK2, DS2, DKS2}
             end,
@@ -305,7 +305,7 @@ write_kvs(State, UpdateSeq, ViewKVs, DocIdKeys, GroupSeq0) ->
         ToAdd = KVs ++ RemKVs,
         {ToFind, SKVs, KSKVs, Seqs} =
         lists:foldl(fun({{Key, DocId}=K, {Val, Seq}},{Keys1, SKVs1, KSKVs1, Seqs1}) ->
-                            SRow = {{Seq, Key}, {Val, DocId}},
+                            SRow = {Seq, {Val, Key, DocId}},
                             KSRow = {{Key, Seq}, {Val, DocId}},
                             SKVs2 = [SRow | SKVs1],
                             KSKVs2 = [KSRow | KSKVs1],
@@ -418,7 +418,7 @@ insert_removed(R1, [], Seq, {Acc, Dict}) ->
 removed_seqs([], Acc, KAcc) ->
     {Acc, KAcc};
 removed_seqs([{ok, {{Key, _DocId}, {_Val, Seq}}} | Rest], Acc, KAcc) ->
-    removed_seqs(Rest, [{Seq, Key} | Acc], [{Key, Seq} | KAcc]);
+    removed_seqs(Rest, [Seq | Acc], [{Key, Seq} | KAcc]);
 removed_seqs([_ | Rest], Acc, KAcc) ->
     removed_seqs(Rest, Acc, KAcc).
 

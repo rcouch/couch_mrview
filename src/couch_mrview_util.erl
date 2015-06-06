@@ -346,7 +346,7 @@ fold_fun(Fun, [KV|Rest], {KVReds, Reds}, Acc) ->
 
 fold_changes(Bt, Fun, Acc, Opts, Type) ->
     WrapperFun = fun(KV, _Reds, Acc2) ->
-        fold_changes_fun(Fun, changes_expand_dups([KV], Type, []), Acc2)
+        fold_changes_fun(Fun, changes_expand([KV], Type, []), Acc2)
     end,
     {ok, _LastRed, _Acc} = couch_btree:fold(Bt, WrapperFun, Acc, Opts).
 
@@ -770,18 +770,12 @@ expand_dups([KV | Rest], Acc) ->
     expand_dups(Rest, [KV | Acc]).
 
 
-changes_expand_dups([], _Type, Acc) ->
+changes_expand([], _Type, Acc) ->
     lists:reverse(Acc);
-changes_expand_dups([{{Key, Seq}, {DocId, {dups, Vals}}} | Rest], by_key, Acc) ->
-    Expanded = [{{Seq, Key, DocId}, Val} || Val <- Vals],
-    changes_expand_dups(Rest, by_key, Expanded ++ Acc);
-changes_expand_dups([{{Seq, Key}, {DocId, {dups, Vals}}} | Rest], Type, Acc) ->
-    Expanded = [{{Seq, Key, DocId}, Val} || Val <- Vals],
-    changes_expand_dups(Rest, Type, Expanded ++ Acc);
-changes_expand_dups([{{Key, Seq}, {Val, DocId}} | Rest], by_key, Acc) ->
-    changes_expand_dups(Rest, by_key, [{{Seq, Key, DocId}, Val} | Acc]);
-changes_expand_dups([{{Seq, Key}, {Val, DocId}} | Rest], Type, Acc) ->
-    changes_expand_dups(Rest, Type, [{{Seq, Key, DocId}, Val} | Acc]).
+changes_expand([{{Key, Seq}, {Val, DocId}} | Rest], by_key, Acc) ->
+    changes_expand(Rest, by_key, [{{Seq, Key, DocId}, Val} | Acc]);
+changes_expand([{Seq, {Val, Key, DocId}} | Rest], Type, Acc) ->
+    changes_expand(Rest, Type, [{{Seq, Key, DocId}, Val} | Acc]).
 
 maybe_load_doc(_Db, _DI, #mrargs{include_docs=false}) ->
     [];

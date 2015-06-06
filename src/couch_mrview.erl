@@ -524,7 +524,7 @@ make_view_changes_args(_Option, _) ->
 make_view_changes_opts(StartSeq, _Options, Args, by_key) ->
     couch_mrview_util:changes_key_opts(StartSeq, Args);
 make_view_changes_opts(StartSeq, Options, _Args, _) ->
-    [[{start_key, {StartSeq+1, -16#ffffffffffffffff}}] ++ Options].
+    [[{start_key, StartSeq+1}] ++ Options].
 
 changes_fold_fun(by_seq, UserFun, _Args, _StartSeq) ->
     UserFun;
