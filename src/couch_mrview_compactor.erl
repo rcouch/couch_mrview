@@ -39,6 +39,7 @@ compact(State) ->
         idx_name=IdxName,
         sig=Sig,
         update_seq=Seq,
+        group_seq=GSeq,
         id_btree=IdBtree,
         views=Views
     } = State,
@@ -116,7 +117,8 @@ compact(State) ->
     {ok, EmptyState#mrst{
         id_btree=NewIdBtree,
         views=NewViews,
-        update_seq=Seq
+        update_seq=Seq,
+        group_seq=GSeq
     }}.
 
 
@@ -143,11 +145,14 @@ compact_view(View, EmptyView, BufferSize, Acc0) ->
                                EmptyView#mrview.seq_btree,
                                BufferSize, Acc1),
 
-    {NewKSeqBt, Acc2} = compact_view_btree(View#mrview.kseq_btree,
+    {NewKSeqBt, Acc3} = compact_view_btree(View#mrview.kseq_btree,
                                EmptyView#mrview.kseq_btree,
-                               BufferSize, Acc1),
+                               BufferSize, Acc2),
 
-    {EmptyView#mrview{btree=NewBt, seq_btree=NewSeqBt, kseq_btree=NewKSeqBt}, Acc2}.
+    {EmptyView#mrview{btree=NewBt,
+                      seq_btree=NewSeqBt,
+                      kseq_btree=NewKSeqBt,
+                      group_seq=View#mrview.group_seq}, Acc3}.
 
 compact_view_btree(Btree, EmptyBtree, BufferSize, Acc0) ->
     Fun = fun(KV, #acc{btree = Bt, kvs = Kvs, kvs_size = KvsSize} = Acc) ->

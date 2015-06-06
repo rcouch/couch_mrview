@@ -47,16 +47,16 @@ test() ->
 test_basic(Db) ->
     Result = run_query(Db, 0, []),
     Expect = {ok, [
-                {{2, 1, <<"1">>}, 1},
-                {{3, 10, <<"10">>}, 10},
-                {{4, 2, <<"2">>}, 2},
-                {{5, 3, <<"3">>}, 3},
-                {{6, 4, <<"4">>}, 4},
-                {{7, 5, <<"5">>}, 5},
-                {{8, 6, <<"6">>}, 6},
-                {{9, 7, <<"7">>}, 7},
-                {{10, 8, <<"8">>}, 8},
-                {{11, 9, <<"9">>}, 9}
+                {{1, 1, <<"1">>}, 1},
+                {{2, 10, <<"10">>}, 10},
+                {{3, 2, <<"2">>}, 2},
+                {{4, 3, <<"3">>}, 3},
+                {{5, 4, <<"4">>}, 4},
+                {{6, 5, <<"5">>}, 5},
+                {{7, 6, <<"6">>}, 6},
+                {{8, 7, <<"7">>}, 7},
+                {{9, 8, <<"8">>}, 8},
+                {{10, 9, <<"9">>}, 9}
     ]},
     etap:is(Result, Expect, "Simple view query worked.").
 
@@ -64,29 +64,27 @@ test_basic(Db) ->
 test_range(Db) ->
     Result = run_query(Db, 0, [{start_key, 3}, {end_key, 5}]),
     Expect = {ok, [
-                {{5, 3, <<"3">>}, 3},
-                {{6, 4, <<"4">>}, 4},
-                {{7, 5, <<"5">>}, 5}
+                {{4, 3, <<"3">>}, 3},
+                {{5, 4, <<"4">>}, 4},
+                {{6, 5, <<"5">>}, 5}
     ]},
     etap:is(Result, Expect, "Query with range works.").
 
 test_basic_since(Db) ->
     Result = run_query(Db, 5, []),
     Expect = {ok, [
-                {{6, 4, <<"4">>}, 4},
-                {{7, 5, <<"5">>}, 5},
-                {{8, 6, <<"6">>}, 6},
-                {{9, 7, <<"7">>}, 7},
-                {{10, 8, <<"8">>}, 8},
-                {{11, 9, <<"9">>}, 9}
+                {{6, 5, <<"5">>}, 5},
+                {{7, 6, <<"6">>}, 6},
+                {{8, 7, <<"7">>}, 7},
+                {{9, 8, <<"8">>}, 8},
+                {{10, 9, <<"9">>}, 9}
     ]},
     etap:is(Result, Expect, "Simple view query since 5 worked.").
 
 test_range_since(Db) ->
     Result = run_query(Db, 5, [{start_key, 3}, {end_key, 5}]),
     Expect = {ok, [
-                {{6, 4, <<"4">>}, 4},
-                {{7, 5, <<"5">>}, 5}
+                {{6, 5, <<"5">>}, 5}
     ]},
     etap:is(Result, Expect, "Query with range since 5 works.").
 
@@ -100,11 +98,11 @@ test_range_count(Db) ->
 
 test_basic_count_since(Db) ->
     Result = run_count_query(Db, 5, []),
-    etap:is(Result, 6, "Simple view count since 5 worked.").
+    etap:is(Result, 5, "Simple view count since 5 worked.").
 
 test_range_count_since(Db) ->
     Result = run_count_query(Db, 5, [{start_key, 3}, {end_key, 5}]),
-    etap:is(Result, 2, "Count with range since 5 works.").
+    etap:is(Result, 1, "Count with range since 5 works.").
 
 test_compact(Db) ->
     Result = couch_mrview:compact(Db, <<"_design/bar">>),
@@ -124,7 +122,7 @@ test_remove_key(Db) ->
     %% check new view key
     Result1 = run_query(Db1, 0, [{start_key, 11}, {end_key, 11}]),
     Expect = {ok, [
-                {{12, 11, <<"11">>}, 11}
+                {{11, 11, <<"11">>}, 11}
     ]},
     etap:is(Result1, Expect, "added key OK."),
 
@@ -141,12 +139,12 @@ test_remove_key(Db) ->
     %% check new view key
     Result3 = run_query(Db2, 0, [{start_key, 11}, {end_key, 11}]),
     Expect2 = {ok, [
-                {{13, 11, <<"11">>}, removed}
+                {{12, 11, <<"11">>}, removed}
     ]},
     etap:is(Result3, Expect2, "removed key OK.").
 
 run_query(Db, Since, Opts) ->
-    Fun = fun({Info, {Val, _Rev}}, Acc) -> {ok, [{Info, Val} | Acc]} end,
+    Fun = fun(KV, Acc) -> {ok, [KV | Acc]} end,
     {ok, R} = couch_mrview:view_changes_since(Db, <<"_design/bar">>, <<"baz">>,
                                               Since, Fun, Opts, []),
     {ok, lists:reverse(R)}.

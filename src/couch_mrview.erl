@@ -104,40 +104,43 @@ view_changes_since(Db, DDoc, VName, StartSeq, UserFun, Options, Acc) ->
                 by_seq -> View#mrview.seq_btree;
                 by_key -> View#mrview.kseq_btree
             end,
+    FoldFun = changes_fold_fun(IdxType, UserFun, Args, StartSeq),
 
     AccOut = lists:foldl(fun(Opts, Acc1) ->
                 {ok, _R, Acc2} = couch_mrview_util:fold_changes(
-                                   Btree, UserFun, Acc1, Opts, IdxType),
+                                   Btree, FoldFun, Acc1, Opts, IdxType),
                 Acc2
         end, Acc, OptList),
     {ok, AccOut}.
-
-
 
 count_view_changes_since(Db, DDoc, VName, SinceSeq) ->
     count_view_changes_since(Db, DDoc, VName, SinceSeq, []).
 
 count_view_changes_since(Db, DDoc, VName, SinceSeq, Options) ->
     IdxType = changes_idx(Options),
-    Args0 = make_view_changes_args(Options, IdxType),
-    {ok, {_, View}, _, Args} = couch_mrview_util:get_view(Db, DDoc, VName,
-                                                          Args0),
-    OptList = make_view_changes_opts(SinceSeq, Options, Args, IdxType),
-    Btree = case IdxType of
-                by_seq -> View#mrview.seq_btree;
-                by_key -> View#mrview.kseq_btree
-            end,
-
-    lists:foldl(fun(Opts, Acc0) ->
-                        {ok, N} = couch_btree:fold_reduce(
-                                    Btree, fun(_SeqStart, PartialReds, 0) ->
-                                                   {ok, couch_btree:final_reduce(
-                                                          Btree, PartialReds)}
-                                           end,
-                                    0, Opts),
-                        Acc0 + N
-                end, 0, OptList).
-
+    case IdxType of
+        by_seq ->
+            Args0 = make_view_changes_args(Options, IdxType),
+            {ok, {_, View}, _, Args} = couch_mrview_util:get_view(Db, DDoc,
+                                                                  VName, Args0),
+            OptList = make_view_changes_opts(SinceSeq, Options, Args, IdxType),
+            lists:foldl(
+              fun(Opts, Acc0) ->
+                      Bt= View#mrview.seq_btree,
+                      {ok, N} = couch_btree:fold_reduce(
+                                  Bt, fun(_SeqStart, PartialReds, 0) ->
+                                              {ok, couch_btree:final_reduce(
+                                                     Bt, PartialReds)}
+                                      end,
+                                  0, Opts),
+                      Acc0 + N
+              end, 0, OptList);
+        by_key ->
+            CountFun = fun(_, Acc) -> {ok, Acc + 1} end,
+            {ok, Count} = view_changes_since(Db, DDoc, VName, SinceSeq,
+                                             CountFun, Options, 0),
+            Count
+    end.
 
 get_info(Db, DDoc) ->
     {ok, Pid} = couch_index_server:get_index(couch_mrview_index, Db, DDoc),
@@ -335,7 +338,7 @@ map_fold(KV, OffsetReds, #mracc{offset=undefined}=Acc) ->
     end;
 map_fold(_KV, _Offset, #mracc{limit=0}=Acc) ->
     {stop, Acc};
-map_fold({{Key, Id}, {removed, _Seq}}, _Offset, Acc) ->
+map_fold({{_Key, _Id}, {removed, _Seq}}, _Offset, Acc) ->
     {ok, Acc#mracc{last_go=ok}};
 map_fold({{Key, Id}, Val0}, _Offset, Acc) ->
     #mracc{
@@ -515,10 +518,24 @@ changes_idx(Options) ->
 
 make_view_changes_args(Options, by_key) ->
     to_mrargs(Options);
-make_view_changes_args(Option, _) ->
+make_view_changes_args(_Option, _) ->
     #mrargs{}.
 
-make_view_changes_opts(StartSeq, Options, Args, by_key) ->
+make_view_changes_opts(StartSeq, _Options, Args, by_key) ->
     couch_mrview_util:changes_key_opts(StartSeq, Args);
-make_view_changes_opts(StartSeq, Options, Args, _) ->
-    [[{start_key, {StartSeq + 1, <<>>}}] ++ Options].
+make_view_changes_opts(StartSeq, Options, _Args, _) ->
+    [[{start_key, {StartSeq+1, -16#ffffffffffffffff}}] ++ Options].
+
+changes_fold_fun(by_seq, UserFun, _Args, _StartSeq) ->
+    UserFun;
+changes_fold_fun(by_key, UserFun, Args, StartSeq) ->
+    GreaterFun = case Args#mrargs.direction of
+                     fwd -> fun(S) -> S > StartSeq end;
+                     _ -> fun(S) -> S < StartSeq end
+                 end,
+    fun({{Seq, _Key, _DocId}, _Val}=KV, Acc) ->
+            case GreaterFun(Seq) of
+                true -> UserFun(KV, Acc);
+                false -> {ok, Acc}
+            end
+    end.

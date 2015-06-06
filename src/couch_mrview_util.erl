@@ -221,7 +221,7 @@ open_view(Db, Fd, Lang, {BTState, SeqBTState, KSeqBTState, USeq, PSeq, GSeq},
     ReduceFun =
         fun(reduce, KVs) ->
             KVs2 = detuple_kvs(expand_dups(KVs, []), []),
-            KVs3 = [KV || [_Key, {V, _Seq}]=KV <- KVs2, V /= removed],
+            KVs3 = [[K, V] || [K, {V, _Seq}] <- KVs2, V /= removed],
             {ok, Result} = couch_query_servers:reduce(Lang, FunSrcs, KVs3),
             {length(KVs3), Result};
         (rereduce, Reds) ->
@@ -373,7 +373,8 @@ fold_reduce({NthRed, Lang, View}, Fun,  Acc, Options) ->
     ReduceFun = fun
         (reduce, KVs0) ->
             KVs1 = detuple_kvs(expand_dups(KVs0, []), []),
-            {ok, Red} = couch_query_servers:reduce(Lang, [FunSrc], KVs1),
+            KVs2 = [[K, V] || [K, {V, _Seq}] <- KVs1, V /= removed],
+            {ok, Red} = couch_query_servers:reduce(Lang, [FunSrc], KVs2),
             {0, LPad ++ Red ++ RPad};
         (rereduce, Reds) ->
             ExtractRed = fun({_, UReds0}) -> [lists:nth(NthRed, UReds0)] end,
@@ -713,7 +714,7 @@ changes_key_opts(StartSeq, #mrargs{keys=Keys, direction=Dir}=Args, Extra) ->
 
 
 changes_skey_opts(StartSeq, #mrargs{start_key=undefined}) ->
-    [{start_key, {<<>>, StartSeq+1}}];
+    [{start_key, {-16#ffffffffffffffff, StartSeq+1}}];
 changes_skey_opts(StartSeq, #mrargs{start_key=SKey}) ->
     [{start_key, {SKey, StartSeq+1}}].
 

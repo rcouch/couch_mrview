@@ -296,6 +296,7 @@ write_kvs(State, UpdateSeq, ViewKVs, DocIdKeys, GroupSeq0) ->
     {ok, RemByView, GroupSeq, IdBtree2} = update_id_btree(IdBtree, DocIdKeys,
                                                           GroupSeq0, FirstBuild),
 
+
     UpdateView = fun(#mrview{id_num=ViewId}=View, {ViewId, KVs}) ->
         RemKVs = couch_util:dict_find(ViewId, RemByView, []),
         couch_log:debug("indexing view ~p~n - add: ~p~n - rem: ~p~n", [ViewId,
@@ -312,15 +313,13 @@ write_kvs(State, UpdateSeq, ViewKVs, DocIdKeys, GroupSeq0) ->
                             Seqs2 = [Seq | Seqs1],
                             {Keys2, SKVs2, KSKVs2, Seqs2}
                     end, {[], [], [], []}, ToAdd),
-        %% max view sequence
-        ViewSeq = lists:max(Seqs),
 
         %% update the key tree and retrieved the old results
         {ok, RemovedKeys, VBtree2} = couch_btree:query_modify(View#mrview.btree,
                                                               ToFind, ToAdd, []),
         {NewUpdateSeq, NewGroupSeq, IsUpdated} =
         case VBtree2 =/= View#mrview.btree of
-            true -> {UpdateSeq, ViewSeq, true};
+            true -> {UpdateSeq, lists:max(Seqs), true};
             _ -> {View#mrview.update_seq, View#mrview.group_seq, false}
         end,
 
@@ -365,10 +364,10 @@ update_id_btree(Btree, DocIdKeys, Seq, _) ->
     {ToAdd, RemByView, NewSeq} = insert_removed(lists:sort(ToUpdate),
                                                 lists:sort(Added), Seq,
                                                 {[], dict:new()}),
+
     %% insert new enrtries and mark old entries as removed
     {ok, Btree2} = couch_btree:add_remove(Btree, ToAdd, []),
     {ok, RemByView, NewSeq, Btree2}.
-
 
 insert_removed([{ok, {DocId, DIK1}} | R1], [{DocId, DIK2} | R2], Seq, {Acc, Dict}) ->
     ToAdd = [{VId, Key} || {VId, {Key, _Seq}} <- DIK2],
@@ -406,7 +405,7 @@ insert_removed(R1, [], Seq, {Acc, Dict}) ->
                                                           {Acc2, Dict2, Seq2}) ->
                                            Seq3 = Seq2 + 1,
                                            Row = {{Key, DocId}, {removed, Seq3}},
-                                           Acc3 = [{VId, {Key, Seq2}} | Acc2],
+                                           Acc3 = [{VId, {Key, Seq3}} | Acc2],
                                            Dict3 = dict:append(VId, Row,
                                                                Dict2),
                                            {Acc3, Dict3, Seq3}
