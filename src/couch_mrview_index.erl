@@ -19,7 +19,7 @@
 -export([compact/3, swap_compacted/2]).
 
 -include_lib("couch/include/couch_db.hrl").
--include("include/couch_mrview.hrl").
+-include("couch_mrview.hrl").
 
 
 get(Property, State) ->

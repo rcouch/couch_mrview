@@ -32,7 +32,7 @@
 -define(MOD, couch_mrview_index).
 
 -include_lib("couch/include/couch_db.hrl").
--include("include/couch_mrview.hrl").
+-include("couch_mrview.hrl").
 
 
 get_view(Db, DDoc, ViewName, Args0) ->
