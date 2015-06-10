@@ -24,5 +24,6 @@
         couch_mrview_util
     ]},
     {registered, []},
-    {applications, [kernel, stdlib, couch_index]}
+    {applications, [kernel, stdlib, couch_index]},
+    {included_applications, [ucol_nif]}
 ]}.
