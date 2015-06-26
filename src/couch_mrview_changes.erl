@@ -89,12 +89,13 @@ changes_loop(#vst{dbname=DbName, ddoc=DDocId, refresh=Refresh}=State0, Options) 
     {UserTimeout, Timeout, Heartbeat} = changes_timeout(Options),
 
     process_flag(trap_exit, true),
-    Notifier = index_update_notifier(DbName, DDocId),
 
-    State = State0#vst{notifier=Notifier,
-                        user_timeout=UserTimeout,
-                        timeout=Timeout,
-                        heartbeat=Heartbeat},
+    _ = couch_event:subscribe_cond(index_update, [{{'$1', DbName, DDocId, '_'},
+                                                   [], ['$1']}]),
+
+    State = State0#vst{user_timeout=UserTimeout,
+                       timeout=Timeout,
+                       heartbeat=Heartbeat},
 
     %% maybe trigger the heartbear
     TRef = case Heartbeat of
@@ -116,13 +117,12 @@ changes_loop(#vst{dbname=DbName, ddoc=DDocId, refresh=Refresh}=State0, Options) 
 terminate_loop(State) ->
     #vst{dbname=DbName,
          ddoc=DDocId,
-         notifier=Notifier,
          tref=TRef,
          refresh=Refresh} = State,
 
     maybe_release_indexer(Refresh, DbName, DDocId),
 
-    couch_index_event:stop(Notifier),
+    couch_event:unsubscribe(index_update),
     case TRef of
         nil ->
             ok;
@@ -143,8 +143,7 @@ loop(#vst{notifier=Pid, since=Since, callback=Callback,
                 {stop, Acc2} ->
                     Callback(stop, {Since, Acc2})
             end;
-        index_update ->
-            collect_updates(),
+        updated ->
 
             case view_changes_since(State) of
                 {ok, State2} when Stream =:= true ->
@@ -154,15 +153,8 @@ loop(#vst{notifier=Pid, since=Since, callback=Callback,
                 {stop, #vst{since=LastSeq, acc=Acc2}} ->
                     Callback(stop, {LastSeq, Acc2})
             end;
-        index_delete ->
+        reset ->
             Callback(stop, {Since, Acc});
-        {'EXIT', Pid, Reason} ->
-            couch_log:info("~p notifier exited with reason ~p~n",
-                           [?MODULE, Reason]),
-            %% notifier exited relaunch it
-            Notifier = index_update_notifier(State#vst.dbname,
-                                             State#vst.ddoc),
-            loop(State#vst{notifier=Notifier});
         Message ->
             couch_log:info("got unexpected message ~p~n", [Message]),
             exit(normal)
@@ -255,35 +247,6 @@ multi_view_changes([Options | Rest], {DbName, DDocId, View, Wrapper, Since}=Args
         Error ->
             Error
     end.
-
-
-collect_updates() ->
-    receive
-        index_update ->
-            collect_updates();
-        Else ->
-            self() ! Else,
-            ok
-    after 0 ->
-              ok
-    end.
-
-
-index_update_notifier(#db{name=DbName}, DDocId) ->
-    index_update_notifier(DbName, DDocId);
-index_update_notifier(DbName, DDocId) ->
-    Self = self(),
-    {ok, NotifierPid} = couch_index_event:start_link(fun
-                ({index_update, {Name, Id, couch_mrview_index}})
-                        when Name =:= DbName, Id =:= DDocId ->
-                    Self ! index_update;
-                ({index_delete, {Name, Id, couch_mrview_index}})
-                        when Name =:= DbName, Id =:= DDocId ->
-                    Self ! index_delete;
-                (_Else) ->
-                    ok
-            end),
-    NotifierPid.
 
 
 %% acquire the background indexing task so it can eventually be started
