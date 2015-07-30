@@ -34,6 +34,8 @@ get(Property, State) ->
             State#mrst.update_seq;
         purge_seq ->
             State#mrst.purge_seq;
+        group_seq ->
+            State#mrst.group_seq;
         update_options ->
             Opts = State#mrst.design_opts,
             IncDesign = couch_util:get_value(<<"include_design">>, Opts, false),
